@@ -874,10 +874,9 @@ check_hwcfg_error:
 	return ret;
 }
 
-static int ov9734_power_on(struct device *dev)
+static int ov9734_power_on_state(struct ov9734 *ov9734)
 {
-	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
-	struct ov9734 *ov9734 = to_ov9734(sd);
+	struct device *dev = ov9734->dev;
 	int ret;
 
 	ret = clk_prepare_enable(ov9734->clk);
@@ -898,17 +897,36 @@ static int ov9734_power_on(struct device *dev)
 	return 0;
 }
 
-static int ov9734_power_off(struct device *dev)
+static int ov9734_power_off_state(struct ov9734 *ov9734)
 {
-	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
-	struct ov9734 *ov9734 = to_ov9734(sd);
-
 	/* Assert reset */
 	gpiod_set_value_cansleep(ov9734->reset_gpio, 1);
 
 	clk_disable_unprepare(ov9734->clk);
 
 	return 0;
+}
+
+static int ov9734_power_on(struct device *dev)
+{
+	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
+
+	if (!sd)
+		return dev_err_probe(dev, -ENODEV,
+				     "sensor state unavailable during power on\n");
+
+	return ov9734_power_on_state(to_ov9734(sd));
+}
+
+static int ov9734_power_off(struct device *dev)
+{
+	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
+
+	if (!sd)
+		return dev_err_probe(dev, -ENODEV,
+				     "sensor state unavailable during power off\n");
+
+	return ov9734_power_off_state(to_ov9734(sd));
 }
 
 static const struct dev_pm_ops ov9734_pm_ops = {
@@ -967,11 +985,18 @@ static int ov9734_probe(struct i2c_client *client)
 		ov9734->reset_gpio = NULL;
 	}
 
-	ret = ov9734_power_on(ov9734->dev);
+	/*
+	 * ov9734_power_on() is also the runtime-PM resume callback and obtains
+	 * the sensor state through i2c_get_clientdata().  Initialise the V4L2
+	 * subdevice before the first explicit power-on so delayed ACPI rebinds
+	 * cannot dereference a NULL clientdata pointer.
+	 */
+	v4l2_i2c_subdev_init(&ov9734->sd, client, &ov9734_subdev_ops);
+
+	ret = ov9734_power_on_state(ov9734);
 	if (ret)
 		return dev_err_probe(ov9734->dev, ret, "failed to power on\n");
 
-	v4l2_i2c_subdev_init(&ov9734->sd, client, &ov9734_subdev_ops);
 	ret = ov9734_identify_module(ov9734);
 	if (ret) {
 		dev_err(ov9734->dev, "failed to find sensor: %d", ret);

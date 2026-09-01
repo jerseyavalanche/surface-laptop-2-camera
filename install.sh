@@ -44,11 +44,18 @@ info "Kernel: $KERNEL"
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 info "Installing apt dependencies..."
+# Ubuntu Jammy ships v4l2loopback 0.12.7, which does not compile against
+# current linux-surface kernels (including 6.19). Remove any half-configured
+# copy left by apt before installing the remaining dependencies.
+if dpkg-query -W -f='${db:Status-Abbrev}' v4l2loopback-dkms 2>/dev/null | grep -q '^i'; then
+    warn "Removing incompatible Ubuntu v4l2loopback-dkms package..."
+    dpkg --remove --force-remove-reinstreq v4l2loopback-dkms || true
+fi
 apt-get install -y \
     dkms \
+    git \
     "linux-headers-${KERNEL}" \
     v4l-utils \
-    v4l2loopback-dkms \
     python3-numpy \
     python3-gi \
     python3-gst-1.0 \
@@ -56,14 +63,34 @@ apt-get install -y \
     gstreamer1.0-plugins-good \
     gstreamer1.0-pipewire
 
+# Jammy's v4l2loopback 0.12.7 uses kernel APIs removed long ago. Install the
+# maintained upstream DKMS source, which supports kernel 6.19.
+info "Installing current v4l2loopback DKMS module..."
+V4L2_VER=0.15.4
+V4L2_SRC=/usr/src/v4l2loopback-$V4L2_VER
+LOCAL_V4L2_SRC="$SCRIPT_DIR/../v4l2loopback-upstream"
+if [[ -f "$LOCAL_V4L2_SRC/dkms.conf" ]]; then
+    rm -rf "$V4L2_SRC"
+    cp -a "$LOCAL_V4L2_SRC" "$V4L2_SRC"
+else
+    rm -rf "$V4L2_SRC"
+    git clone --depth 1 https://github.com/v4l2loopback/v4l2loopback.git "$V4L2_SRC"
+fi
+dkms remove "v4l2loopback/$V4L2_VER" --all 2>/dev/null || true
+dkms add "v4l2loopback/$V4L2_VER"
+dkms build "v4l2loopback/$V4L2_VER"
+dkms install --force "v4l2loopback/$V4L2_VER"
+info "  v4l2loopback/$V4L2_VER installed"
+
 # ── Layer 1: ipu-bridge-ov9734 DKMS ──────────────────────────────────────────
 info "Installing ipu-bridge-ov9734 DKMS module (Layer 1: OVTI9734 sensor support)..."
 MOD1=ipu-bridge-ov9734
 VER1=$(grep PACKAGE_VERSION "$SCRIPT_DIR/dkms/$MOD1/dkms.conf" | cut -d'"' -f2)
 SRC1=/usr/src/$MOD1-$VER1
+dkms remove "$MOD1/$VER1" --all 2>/dev/null || true
 rm -rf "$SRC1"
 cp -r "$SCRIPT_DIR/dkms/$MOD1" "$SRC1"
-dkms add    "$MOD1/$VER1" || true
+dkms add    "$MOD1/$VER1"
 dkms build  "$MOD1/$VER1"
 dkms install --force "$MOD1/$VER1"
 info "  ipu-bridge-ov9734/$VER1 installed"
@@ -73,9 +100,10 @@ info "Installing ov9734-surface DKMS module (Layer 3: MCLK + reset GPIO handling
 MOD3=ov9734-surface
 VER3=$(grep PACKAGE_VERSION "$SCRIPT_DIR/dkms/$MOD3/dkms.conf" | cut -d'"' -f2)
 SRC3=/usr/src/$MOD3-$VER3
+dkms remove "$MOD3/$VER3" --all 2>/dev/null || true
 rm -rf "$SRC3"
 cp -r "$SCRIPT_DIR/dkms/$MOD3" "$SRC3"
-dkms add    "$MOD3/$VER3" || true
+dkms add    "$MOD3/$VER3"
 dkms build  "$MOD3/$VER3"
 dkms install --force "$MOD3/$VER3"
 info "  ov9734-surface/$VER3 installed"
@@ -90,7 +118,9 @@ info "  udev rule installed"
 # ── v4l2loopback config ───────────────────────────────────────────────────────
 info "Installing v4l2loopback modprobe config..."
 install -m 644 "$SCRIPT_DIR/modprobe.d/v4l2loopback.conf" /etc/modprobe.d/
+printf '%s\n' v4l2loopback > /etc/modules-load.d/surface-laptop-2-camera.conf
 info "  /etc/modprobe.d/v4l2loopback.conf installed"
+info "  v4l2loopback enabled for boot-time loading"
 
 # ── Bridge script ─────────────────────────────────────────────────────────────
 info "Installing camera bridge script..."
@@ -131,6 +161,13 @@ else
     warn "    systemctl --user daemon-reload"
     warn "    systemctl --user enable --now camera-bridge.service"
 fi
+
+# The stock camera drivers may be embedded in the current initramfs. Rebuild it
+# after DKMS installation so the patched ov9734 and ipu_bridge modules win at
+# the next boot instead of the old in-tree copies.
+info "Rebuilding initramfs with patched camera modules..."
+depmod -a "$KERNEL"
+update-initramfs -u -k "$KERNEL"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo

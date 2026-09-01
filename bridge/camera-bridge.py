@@ -61,7 +61,7 @@ def setup_media_pipeline():
       ['media-ctl', '-d', '/dev/media0', '--set-v4l2',
        '"ipu3-csi2 1":1[fmt:SGRBG10_1X10/1296x734]'],
       ['v4l2-ctl', '-d', '/dev/v4l-subdev7',
-       '--set-ctrl=analogue_gain=80,digital_gain=400'],
+       '--set-ctrl=analogue_gain=248,digital_gain=1023'],
   ]
   for cmd in cmds:
       subprocess.run(cmd, check=True, capture_output=True)

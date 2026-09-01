@@ -1,0 +1,9 @@
+# In-tree kernel module build outputs
+dkms/**/*.o
+dkms/**/*.ko
+dkms/**/*.mod
+dkms/**/*.mod.c
+dkms/**/.*.cmd
+dkms/**/*.o.d
+dkms/**/Module.symvers
+dkms/**/modules.order

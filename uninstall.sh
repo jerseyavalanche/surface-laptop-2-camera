@@ -51,6 +51,7 @@ info "  udev rule removed"
 
 # modprobe config
 rm -f /etc/modprobe.d/v4l2loopback.conf
+rm -f /etc/modules-load.d/surface-laptop-2-camera.conf
 info "  v4l2loopback config removed"
 SUDO_BLOCK
 
